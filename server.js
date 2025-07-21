@@ -3,142 +3,95 @@ const multer = require('multer')
 const path = require('path')
 const fs = require('fs')
 
-// Inisialisasi aplikasi Express
 const app = express()
 const PORT = process.env.PORT || 3000
 
-// Membuat direktori 'public/images' jika belum ada
+// Buat folder tujuan simpan gambar jika belum ada
 const uploadDir = path.join(__dirname, 'public/images')
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true })
 }
 
-// Konfigurasi Multer untuk penyimpanan file
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir) // Folder penyimpanan file
-  },
-  filename: function (req, file, cb) {
-    // Ambil ID dari body request
-    const id = req.body.id
-    if (!id) {
-      return cb(new Error('ID wajib diisi'))
+// Konfigurasi multer simpan file ke folder sementara
+const upload = multer({
+  dest: 'uploads/',
+  fileFilter: (req, file, cb) => {
+    if (!file.originalname.match(/\.(jpg|jpeg|png|gif)$/i)) {
+      return cb(new Error('Hanya file gambar yang diizinkan!'), false)
     }
-    // Rename file: id + ekstensi asli
-    const newFilename = `${id}${path.extname(file.originalname)}`
-    cb(null, newFilename)
+    cb(null, true)
   },
 })
 
-// Filter untuk memastikan hanya file gambar yang diunggah
-const imageFilter = (req, file, cb) => {
-  if (!file.originalname.match(/\.(jpg|jpeg|png|gif)$/i)) {
-    return cb(new Error('Hanya file gambar yang diizinkan!'), false)
-  }
-  cb(null, true)
-}
-
-const upload = multer({ storage: storage, fileFilter: imageFilter })
-
-// Middleware untuk membuat folder 'public' dapat diakses secara statis
-// Baris ini masih diperlukan jika Anda ingin mengakses aset lain di 'public'
+// Akses folder public (agar /images bisa diakses)
 app.use(express.static('public'))
 
+// Root endpoint
 app.get('/', (req, res) => {
-  res.send(
-    'Server API Upload Gambar berjalan. Gunakan metode POST ke /upload untuk mengunggah gambar.',
-  )
+  res.send('API Upload aktif! Gunakan POST ke /upload.')
 })
 
-// --- MODIFIKASI DIMULAI DI SINI ---
-// Rute untuk Mengakses Gambar Tanpa Ekstensi
+// Endpoint akses gambar tanpa perlu tahu ekstensi
 app.get('/images/:imageCode', (req, res) => {
   const imageCode = req.params.imageCode
-  const directoryPath = path.join(__dirname, 'public/images')
+  const dirPath = path.join(__dirname, 'public/images')
 
-  fs.readdir(directoryPath, (err, files) => {
-    if (err) {
-      return res.status(500).send('Tidak dapat membaca direktori gambar.')
-    }
-
-    // Cari file yang namanya dimulai dengan imageCode
-    const fileName = files.find((file) => path.parse(file).name === imageCode)
-
+  fs.readdir(dirPath, (err, files) => {
+    if (err) return res.status(500).send('Gagal baca folder gambar.')
+    const fileName = files.find((f) => path.parse(f).name === imageCode)
     if (fileName) {
-      // Jika file ditemukan, kirim file tersebut
-      res.sendFile(path.join(directoryPath, fileName))
+      res.sendFile(path.join(dirPath, fileName))
     } else {
-      // Jika tidak ada file yang cocok, kirim status 404
       res.status(404).send('Gambar tidak ditemukan.')
     }
   })
 })
-// --- AKHIR DARI MODIFIKASI ---
 
-// Rute untuk mengunggah gambar
+// Endpoint upload gambar
 app.post('/upload', upload.single('image'), (req, res) => {
-  // Cek jika tidak ada file yang diunggah
-  if (!req.file) {
+  if (!req.file || !req.body.id) {
     return res.status(400).json({
       status: 'error',
-      message: 'Tidak ada file yang diunggah atau ID tidak disertakan.',
+      message: 'Wajib kirim gambar dan ID.',
     })
   }
 
-  // --- LOGIKA TAMBAHAN UNTUK MENGHAPUS FILE LAMA ---
-  try {
-    const newFilename = req.file.filename
-    const fileId = path.parse(newFilename).name
+  const id = req.body.id
+  const oldPath = req.file.path
+  const ext = path.extname(req.file.originalname)
+  const newFilename = `${id}${ext}`
+  const newPath = path.join(uploadDir, newFilename)
 
-    fs.readdir(uploadDir, (err, files) => {
-      if (err) {
-        console.error('Tidak bisa memindai direktori:', err)
-        return
-      }
+  // Hapus file lama jika ada
+  const existingFiles = fs.readdirSync(uploadDir)
+  existingFiles.forEach((file) => {
+    if (path.parse(file).name === id && file !== newFilename) {
+      fs.unlinkSync(path.join(uploadDir, file))
+    }
+  })
 
-      files.forEach((file) => {
-        const existingFileId = path.parse(file).name
-        if (existingFileId === fileId && file !== newFilename) {
-          fs.unlink(path.join(uploadDir, file), (unlinkErr) => {
-            if (unlinkErr) {
-              console.error(`Gagal menghapus file lama ${file}:`, unlinkErr)
-            } else {
-              console.log(`Berhasil menimpa file lama: ${file}`)
-            }
-          })
-        }
-      })
-    })
-  } catch (error) {
-    console.error('Error saat proses cleanup file lama:', error)
-  }
-  // --- AKHIR DARI LOGIKA TAMBAHAN ---
+  // Pindahkan file
+  fs.rename(oldPath, newPath, (err) => {
+    if (err) {
+      return res
+        .status(500)
+        .json({ status: 'error', message: 'Gagal simpan file.' })
+    }
 
-  // Proses respon setelah unggahan selesai
-  try {
-    // Ubah URL agar sesuai dengan endpoint baru yang tidak menggunakan ekstensi
-    const imageUrl = `${req.protocol}://${req.get('host')}/images/${
-      path.parse(req.file.filename).name
-    }`
-
+    const imageUrl = `${req.protocol}://${req.get('host')}/images/${id}`
     res.status(200).json({
       status: 'success',
-      message: 'Gambar berhasil diunggah atau diperbarui!',
+      message: 'Upload berhasil!',
       data: {
-        id: req.body.id,
-        filename: req.file.filename,
+        id,
+        filename: newFilename,
         url: imageUrl,
       },
     })
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      message: `Terjadi kesalahan di server: ${error.message}`,
-    })
-  }
+  })
 })
 
-// Menjalankan server
+// Jalankan server
 app.listen(PORT, () => {
-  console.log(`Server berjalan di http://localhost:${PORT}`)
+  console.log(`🚀 Server aktif di http://localhost:${PORT}`)
 })
