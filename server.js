@@ -8,7 +8,7 @@ const app = express()
 const PORT = process.env.PORT || 3000
 
 // Membuat direktori 'public/images' jika belum ada
-const uploadDir = 'public/images'
+const uploadDir = path.join(__dirname, 'public/images')
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true })
 }
@@ -41,6 +41,7 @@ const imageFilter = (req, file, cb) => {
 const upload = multer({ storage: storage, fileFilter: imageFilter })
 
 // Middleware untuk membuat folder 'public' dapat diakses secara statis
+// Baris ini masih diperlukan jika Anda ingin mengakses aset lain di 'public'
 app.use(express.static('public'))
 
 app.get('/', (req, res) => {
@@ -48,6 +49,31 @@ app.get('/', (req, res) => {
     'Server API Upload Gambar berjalan. Gunakan metode POST ke /upload untuk mengunggah gambar.',
   )
 })
+
+// --- MODIFIKASI DIMULAI DI SINI ---
+// Rute untuk Mengakses Gambar Tanpa Ekstensi
+app.get('/images/:imageCode', (req, res) => {
+  const imageCode = req.params.imageCode
+  const directoryPath = path.join(__dirname, 'public/images')
+
+  fs.readdir(directoryPath, (err, files) => {
+    if (err) {
+      return res.status(500).send('Tidak dapat membaca direktori gambar.')
+    }
+
+    // Cari file yang namanya dimulai dengan imageCode
+    const fileName = files.find((file) => path.parse(file).name === imageCode)
+
+    if (fileName) {
+      // Jika file ditemukan, kirim file tersebut
+      res.sendFile(path.join(directoryPath, fileName))
+    } else {
+      // Jika tidak ada file yang cocok, kirim status 404
+      res.status(404).send('Gambar tidak ditemukan.')
+    }
+  })
+})
+// --- AKHIR DARI MODIFIKASI ---
 
 // Rute untuk mengunggah gambar
 app.post('/upload', upload.single('image'), (req, res) => {
@@ -60,26 +86,19 @@ app.post('/upload', upload.single('image'), (req, res) => {
   }
 
   // --- LOGIKA TAMBAHAN UNTUK MENGHAPUS FILE LAMA ---
-  // Logika ini akan mencari file lain dengan ID yang sama (namun ekstensi berbeda) dan menghapusnya.
   try {
     const newFilename = req.file.filename
-    const fileId = path.parse(newFilename).name // Mengambil nama file tanpa ekstensi (yaitu ID)
+    const fileId = path.parse(newFilename).name
 
-    // Membaca semua file dalam direktori
     fs.readdir(uploadDir, (err, files) => {
       if (err) {
         console.error('Tidak bisa memindai direktori:', err)
-        return // Keluar jika ada error saat membaca direktori
+        return
       }
 
-      // Loop melalui setiap file yang ditemukan
       files.forEach((file) => {
         const existingFileId = path.parse(file).name
-
-        // Jika ID file yang ada sama dengan ID file yang baru diunggah,
-        // TAPI nama file lengkapnya berbeda (berarti ekstensinya beda)
         if (existingFileId === fileId && file !== newFilename) {
-          // Hapus file lama tersebut
           fs.unlink(path.join(uploadDir, file), (unlinkErr) => {
             if (unlinkErr) {
               console.error(`Gagal menghapus file lama ${file}:`, unlinkErr)
@@ -97,8 +116,9 @@ app.post('/upload', upload.single('image'), (req, res) => {
 
   // Proses respon setelah unggahan selesai
   try {
+    // Ubah URL agar sesuai dengan endpoint baru yang tidak menggunakan ekstensi
     const imageUrl = `${req.protocol}://${req.get('host')}/images/${
-      req.file.filename
+      path.parse(req.file.filename).name
     }`
 
     res.status(200).json({
