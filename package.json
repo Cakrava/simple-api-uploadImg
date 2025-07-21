@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "start"
+    "test": "start",
+    "start": "node server.js"
+
   },
   "keywords": [
     "api"
